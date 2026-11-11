@@ -64,16 +64,16 @@ export function CoverForm({ date, period, staffId, staffName, staffOptions, butt
       ) : (
         <>
           <input type="hidden" name="staff_id" value={staffId} />
-          <p className="text-sm font-medium">Log {staffName} for this lesson</p>
+          <p className="text-sm font-medium">Use {staffName} for this lesson?</p>
         </>
       )}
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="label">Absent teacher (optional)</label>
-          <input name="absent_teacher" className="input" autoFocus={!staffOptions} />
+          <label className="label">Absent teacher <span className="font-normal text-slate-400">(optional)</span></label>
+          <input name="absent_teacher" className="input" />
         </div>
         <div>
-          <label className="label">Class (optional)</label>
+          <label className="label">Class <span className="font-normal text-slate-400">(optional)</span></label>
           <input name="class_name" className="input" />
         </div>
       </div>
@@ -99,7 +99,7 @@ export function CoverForm({ date, period, staffId, staffName, staffOptions, butt
       ) : (
         <div className="flex gap-2">
           <button className="btn-primary" disabled={pending}>
-            {pending ? "Saving…" : "Log cover"}
+            {pending ? "Saving…" : "Confirm"}
           </button>
           <button type="button" className="btn-ghost" onClick={() => setOpen(false)}>
             Cancel

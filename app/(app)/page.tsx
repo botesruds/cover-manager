@@ -4,6 +4,7 @@ import { DatePicker } from "@/components/DatePicker.tsx";
 import { candidatesFor, extrasFor, type Candidate } from "@/lib/candidates.ts";
 import { getCoverCounts, getCovers, getSetting, getStaff, getTimetableFree } from "@/lib/data.ts";
 import {
+  SCHOOL_TIMEZONE,
   academicYearStart,
   addDays,
   formatLong,
@@ -15,10 +16,13 @@ import {
   weekLetter,
   weekStart,
 } from "@/lib/dates.ts";
-import { PERIOD_LABEL, periodsForDay, type PeriodKey, type Weekday } from "@/lib/schedule.ts";
+import { PERIOD_LABEL, PERIOD_ORDER, periodsForDay, type PeriodKey, type Weekday } from "@/lib/schedule.ts";
 import type { Cover, Staff } from "@/lib/types.ts";
 import { deleteCover } from "../actions.ts";
 import { setWeekLetter } from "./rota/actions.ts";
+
+/** How many of the fairest choices to show before "Show more". */
+const TOP = 3;
 
 function prevSchoolDay(d: string) {
   let x = addDays(d, -1);
@@ -29,16 +33,39 @@ function followingSchoolDay(d: string) {
   return nextSchoolDay(addDays(d, 1));
 }
 
+/** Current time at school as "HH:MM". */
+function nowHHMM() {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: SCHOOL_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date());
+}
+
 export default async function CoverPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; p?: string }>;
 }) {
   const sp = await searchParams;
   const today = todayISO();
   const date = nextSchoolDay(isValidISO(sp.date) ? sp.date : today);
   const day = isoWeekday(date) as Weekday;
   const ws = weekStart(date);
+  const periods = periodsForDay(day);
+
+  // Which period to show: the one asked for, else (today) the one running
+  // now or next, else the first of the day.
+  let period: PeriodKey = periods[0].key;
+  if (PERIOD_ORDER.includes(sp.p as PeriodKey) && periods.some((x) => x.key === sp.p)) {
+    period = sp.p as PeriodKey;
+  } else if (date === today) {
+    const now = nowHHMM();
+    const idx = periods.findIndex((x, i) => (periods[i + 1]?.time ?? "99:99") > now);
+    if (idx >= 0) period = periods[idx].key;
+  }
+  const time = periods.find((x) => x.key === period)!.time;
 
   const [staff, weekCovers, counts, free, weekAMonday] = await Promise.all([
     getStaff(),
@@ -48,167 +75,166 @@ export default async function CoverPage({
     getSetting("week_a_monday"),
   ]);
   const week = weekLetter(date, weekAMonday);
-  const hasTimetable = free.size > 0;
-
   const staffById = new Map(staff.map((s) => [s.id, s]));
-  const onRotaCount = staff.filter((s) => s.rota_slots.length > 0).length;
-  const usedThisWeek = new Set(weekCovers.map((c) => c.staff_id)).size;
   const staffOptions = staff.map((s) => ({ id: s.id, name: s.name, code: s.code }));
 
+  const cands = candidatesFor(staff, day, period, date, weekCovers, counts);
+  const extras =
+    free.size > 0 ? extrasFor(staff, free, week, day, period, date, weekCovers, counts) : [];
+  const setHere = weekCovers.filter((c) => c.cover_date === date && c.period === period);
+  const rotaFree = cands.filter((c) => c.status === "available");
+  const rotaUsed = cands.filter((c) => c.status === "used").length;
+  const extraFree = extras.filter((c) => c.status === "available" && !setHere.some((s) => s.staff_id === c.staff.id));
+  const best = rotaFree.slice(0, TOP);
+  const moreRota = rotaFree.slice(TOP);
+
+  const setCount = (p: PeriodKey) => weekCovers.filter((c) => c.cover_date === date && c.period === p).length;
+  const href = (o: { date?: string; p?: PeriodKey }) => {
+    const q = new URLSearchParams({ date: o.date ?? date });
+    if (o.p) q.set("p", o.p);
+    return `/?${q}`;
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="flex flex-wrap items-center gap-3 text-2xl font-semibold">
-            {formatLong(date)}
+    <div className="mx-auto max-w-2xl space-y-5">
+      {/* Day */}
+      <div className="flex items-center justify-between gap-2">
+        <Link href={href({ date: prevSchoolDay(date) })} className="btn-ghost h-10 w-10 p-0" aria-label="Previous day">
+          ←
+        </Link>
+        <div className="min-w-0 text-center">
+          <h1 className="text-xl font-semibold sm:text-2xl">{formatLong(date)}</h1>
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm text-slate-500">
             <WeekBadge week={week} monday={ws} />
-          </h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Week of {formatShort(ws)}: {weekCovers.length} cover{weekCovers.length === 1 ? "" : "s"} set,{" "}
-            {usedThisWeek} of {onRotaCount} rota staff used.{" "}
-            <Link href={`/week?date=${date}`} className="text-brand-700 underline">
-              See the week
-            </Link>
-          </p>
+            {date !== nextSchoolDay(today) && (
+              <Link href="/" className="text-brand-700 hover:underline">
+                Back to today
+              </Link>
+            )}
+            <DatePicker value={date} compact />
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Link href={`/?date=${prevSchoolDay(date)}`} className="btn-ghost" aria-label="Previous day">
-            ←
-          </Link>
-          <DatePicker value={date} />
-          <Link href={`/?date=${followingSchoolDay(date)}`} className="btn-ghost" aria-label="Next day">
-            →
-          </Link>
-          {date !== nextSchoolDay(today) && (
-            <Link href="/" className="btn-ghost">
-              Today
-            </Link>
-          )}
-        </div>
+        <Link href={href({ date: followingSchoolDay(date) })} className="btn-ghost h-10 w-10 p-0" aria-label="Next day">
+          →
+        </Link>
       </div>
 
-      <p className="text-sm text-slate-500">
-        Names in each period come from the rota. Anyone who has already covered this week is greyed
-        out. The rest are in fairness order: fewest covers this year first.
-        {hasTimetable &&
-          ` Under each period, "More free staff" lists people off the rota who the master timetable shows as free ${
-            week ? `in Week ${week}` : "in both Week A and Week B"
-          }.`}
-      </p>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {periodsForDay(day).map(({ key, time }) => {
-          const cands = candidatesFor(staff, day, key, date, weekCovers, counts);
-          const here = weekCovers.filter((c) => c.cover_date === date && c.period === key);
-          const offRota = here.filter((c) => !cands.some((x) => x.staff.id === c.staff_id));
-          const extras = hasTimetable
-            ? extrasFor(staff, free, week, day, key, date, weekCovers, counts).filter(
-                (x) => !offRota.some((c) => c.staff_id === x.staff.id),
-              )
-            : null;
+      {/* Period */}
+      <nav className="grid grid-cols-4 gap-1.5 sm:grid-cols-8" aria-label="Period">
+        {periods.map(({ key, time: t }) => {
+          const on = key === period;
+          const n = setCount(key);
           return (
-            <PeriodCard
+            <Link
               key={key}
-              date={date}
-              period={key}
-              time={time}
-              candidates={cands}
-              offRota={offRota}
-              extras={extras}
-              staffById={staffById}
-              staffOptions={staffOptions}
-            />
+              href={href({ p: key })}
+              className={`relative rounded-lg border px-1 py-2 text-center leading-tight transition ${
+                on
+                  ? "border-brand-600 bg-brand-600 text-white"
+                  : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+              }`}
+            >
+              <div className="text-sm font-semibold">{PERIOD_LABEL[key].replace("Tutor ", "Tut ")}</div>
+              <div className={`text-[11px] ${on ? "text-brand-100" : "text-slate-400"}`}>{t}</div>
+              {n > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-600 px-1 text-[11px] font-semibold text-white"
+                  title={`${n} cover${n === 1 ? "" : "s"} set`}
+                >
+                  {n}
+                </span>
+              )}
+            </Link>
           );
         })}
-      </div>
+      </nav>
+
+      <section className="card">
+        <header className="border-b border-slate-100 px-4 py-3">
+          <h2 className="text-lg font-semibold">
+            {PERIOD_LABEL[period]} <span className="font-normal text-slate-400">{time}</span>
+          </h2>
+        </header>
+
+        {setHere.length > 0 && (
+          <div className="border-b border-slate-100 bg-emerald-50 px-4 py-3">
+            <div className="mb-1 text-xs font-semibold tracking-wide text-emerald-800 uppercase">Covering</div>
+            <ul className="space-y-1.5">
+              {setHere.map((cv) => (
+                <SetRow key={cv.id} cover={cv} person={staffById.get(cv.staff_id)} />
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="px-4 pt-3 pb-1">
+          <div className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+            {best.length ? "Best choices" : "On the rota"}
+          </div>
+        </div>
+        <ul>
+          {best.map((c, i) => (
+            <PersonRow key={c.staff.id} c={c} date={date} period={period} highlight={i === 0} />
+          ))}
+        </ul>
+        {best.length === 0 && (
+          <p className="px-4 pb-3 text-sm text-slate-500">
+            {cands.length === 0
+              ? "Nobody is on the rota for this period."
+              : "Everyone on the rota for this period has already covered this week."}
+          </p>
+        )}
+
+        {moreRota.length > 0 && (
+          <More label={`${moreRota.length} more on the rota`}>
+            {moreRota.map((c) => (
+              <PersonRow key={c.staff.id} c={c} date={date} period={period} />
+            ))}
+          </More>
+        )}
+        {extraFree.length > 0 && (
+          <More label={`${extraFree.length} other staff free this period`} hint="Not on the rota, but free on the timetable">
+            {extraFree.map((c) => (
+              <PersonRow key={c.staff.id} c={c} date={date} period={period} extra />
+            ))}
+          </More>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-3 text-sm">
+          <CoverForm
+            date={date}
+            period={period}
+            staffOptions={staffOptions}
+            buttonLabel="Pick someone else…"
+            buttonClass="cursor-pointer text-brand-700 hover:underline"
+          />
+          {rotaUsed > 0 && (
+            <span className="text-xs text-slate-400">
+              {rotaUsed} on the rota already used this week
+            </span>
+          )}
+        </div>
+      </section>
+
+      <p className="text-center text-xs text-slate-400">
+        Fairest first: nobody who has covered this week, then fewest covers this year.{" "}
+        <Link href={`/week?date=${date}`} className="underline hover:text-slate-600">
+          See the whole week
+        </Link>
+      </p>
     </div>
   );
 }
 
-function PeriodCard({
-  date,
-  period,
-  time,
-  candidates,
-  offRota,
-  extras,
-  staffById,
-  staffOptions,
-}: {
-  date: string;
-  period: PeriodKey;
-  time: string;
-  candidates: Candidate[];
-  offRota: Cover[];
-  extras: Candidate[] | null;
-  staffById: Map<string, Staff>;
-  staffOptions: { id: string; name: string; code: string }[];
-}) {
-  const available = candidates.filter((c) => c.status === "available").length;
-  const set = candidates.filter((c) => c.status === "covering").length + offRota.length;
-  return (
-    <section className="card flex flex-col">
-      <header className="flex items-baseline justify-between border-b border-slate-100 px-4 py-3">
-        <h2 className="font-semibold">
-          {PERIOD_LABEL[period]} <span className="font-normal text-slate-500">{time}</span>
-        </h2>
-        <span className="text-xs text-slate-500">
-          {set > 0 && <span className="mr-2 font-medium text-emerald-700">{set} set</span>}
-          {available} of {candidates.length} free to use
-        </span>
-      </header>
-      <ul className="divide-y divide-slate-100">
-        {candidates.map((c) => (
-          <CandidateRow key={c.staff.id} c={c} date={date} period={period} />
-        ))}
-        {offRota.map((cv) => (
-          <li key={cv.id} className="bg-emerald-50 px-4 py-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <span className="font-medium">{staffById.get(cv.staff_id)?.name ?? "Unknown"}</span>{" "}
-                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">off rota</span>
-                <CoverDetail cover={cv} />
-              </div>
-              <UndoButton id={cv.id} />
-            </div>
-          </li>
-        ))}
-        {candidates.length === 0 && offRota.length === 0 && (
-          <li className="px-4 py-3 text-sm text-slate-500">Nobody is on the rota for this period.</li>
-        )}
-      </ul>
-      {extras && <ExtrasList extras={extras} date={date} period={period} />}
-      <div className="mt-auto border-t border-slate-100 px-4 py-2.5">
-        <CoverForm
-          date={date}
-          period={period}
-          staffOptions={staffOptions}
-          buttonLabel="Use someone else…"
-          buttonClass="text-sm text-brand-700 hover:underline cursor-pointer"
-        />
-      </div>
-    </section>
-  );
-}
-
-function ExtrasList({ extras, date, period }: { extras: Candidate[]; date: string; period: PeriodKey }) {
-  const free = extras.filter((c) => c.status === "available");
-  const used = extras.length - free.length;
+function More({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <details className="group border-t border-slate-100">
       <summary className="cursor-pointer list-none px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50">
-        <span className="mr-1 inline-block transition group-open:rotate-90">▸</span>
-        More free staff ({free.length})
-        {used > 0 && <span className="text-xs text-slate-400"> · {used} already used this week</span>}
+        <span className="mr-1.5 inline-block text-slate-400 transition group-open:rotate-90">▸</span>
+        Show {label}
+        {hint && <span className="block pl-4 text-xs text-slate-400">{hint}</span>}
       </summary>
-      <ul className="divide-y divide-slate-100 bg-slate-50/50">
-        {free.map((c) => (
-          <CandidateRow key={c.staff.id} c={c} date={date} period={period} extra />
-        ))}
-        {free.length === 0 && (
-          <li className="px-4 py-2.5 text-sm text-slate-500">Nobody else is free and unused this period.</li>
-        )}
-      </ul>
+      <ul className="bg-slate-50/60">{children}</ul>
     </details>
   );
 }
@@ -217,101 +243,86 @@ function WeekBadge({ week, monday }: { week: "A" | "B" | null; monday: string })
   if (week) {
     const other = week === "A" ? "B" : "A";
     return (
-      <form action={setWeekLetter} className="flex items-center gap-1.5 text-sm font-normal">
-        <span className="rounded-full bg-brand-50 px-2.5 py-0.5 font-medium text-brand-700">Week {week}</span>
+      <form action={setWeekLetter} className="inline-flex items-center gap-1.5">
+        <span className="rounded-full bg-brand-50 px-2 py-0.5 font-medium text-brand-700">Week {week}</span>
         <input type="hidden" name="monday" value={monday} />
         <input type="hidden" name="letter" value={other} />
-        <button className="cursor-pointer text-xs text-slate-400 hover:text-slate-700 hover:underline">
-          It&apos;s Week {other}
+        <button
+          className="cursor-pointer text-xs text-slate-400 hover:text-slate-700 hover:underline"
+          title={`Change this week to Week ${other}`}
+        >
+          change
         </button>
       </form>
     );
   }
   return (
-    <span className="flex items-center gap-1.5 text-sm font-normal text-slate-600">
-      Which week is this?
+    <span className="inline-flex items-center gap-1.5 text-amber-700">
+      Which week?
       {(["A", "B"] as const).map((l) => (
         <form key={l} action={setWeekLetter}>
           <input type="hidden" name="monday" value={monday} />
           <input type="hidden" name="letter" value={l} />
-          <button className="btn-ghost px-2 py-0.5 text-xs">Week {l}</button>
+          <button className="btn-ghost px-2 py-0.5 text-xs">{l}</button>
         </form>
       ))}
     </span>
   );
 }
 
-function CandidateRow({ c, date, period, extra }: { c: Candidate; date: string; period: PeriodKey; extra?: boolean }) {
-  const optLabel = extra ? "Free" : c.option === 1 ? "1st" : c.option === 2 ? "2nd" : "Tutor";
-  const here = c.weekCovers.find((x) => x.cover_date === date && x.period === period);
-  const usedOn = c.weekCovers
-    .filter((x) => x !== here)
-    .map((x) => `${formatShort(x.cover_date)} ${PERIOD_LABEL[x.period]}`)
-    .join(", ");
+function fairness(c: Candidate) {
+  return c.yearTotal === 0
+    ? "No covers yet this year"
+    : `${c.yearTotal} cover${c.yearTotal === 1 ? "" : "s"} this year · last ${formatShort(c.lastDate!)}`;
+}
 
+function PersonRow({
+  c,
+  date,
+  period,
+  extra,
+  highlight,
+}: {
+  c: Candidate;
+  date: string;
+  period: PeriodKey;
+  extra?: boolean;
+  highlight?: boolean;
+}) {
   return (
-    <li
-      className={`px-4 py-2.5 ${
-        c.status === "covering" ? "bg-emerald-50" : c.status === "used" ? "bg-slate-50 text-slate-400" : ""
-      }`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-2">
-            <span className={`font-medium ${c.status === "used" ? "line-through decoration-slate-300" : ""}`}>
-              {c.staff.name}
-            </span>
-            <span className="text-xs text-slate-400">{c.staff.code}</span>
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">{optLabel}</span>
-          </div>
-          <div className="truncate text-xs text-slate-500">
-            {c.status === "used" ? (
-              <>Already covered this week: {usedOn}</>
-            ) : (
-              <>
-                {c.yearTotal === 0
-                  ? "No covers yet this year"
-                  : `${c.yearTotal} cover${c.yearTotal === 1 ? "" : "s"} this year, last ${formatShort(c.lastDate!)}`}
-                {c.staff.teaches ? ` · ${c.staff.teaches}` : ""}
-              </>
-            )}
-          </div>
-          {here && <CoverDetail cover={here} />}
-        </div>
-        <div className="shrink-0">
-          {c.status === "covering" && here ? (
-            <UndoButton id={here.id} />
-          ) : c.status === "available" ? (
-            <CoverForm
-              date={date}
-              period={period}
-              staffId={c.staff.id}
-              staffName={c.staff.name}
-              buttonLabel="Use"
-              buttonClass={extra ? "btn-ghost" : undefined}
-              extra={extra}
-            />
-          ) : null}
-        </div>
+    <li className="flex flex-wrap items-center justify-between gap-x-3 border-t border-slate-100 px-4 py-3 first:border-t-0">
+      <div className="min-w-0">
+        <div className="font-medium">{c.staff.name}</div>
+        <div className="text-xs text-slate-500">{fairness(c)}</div>
+      </div>
+      <div className="shrink-0 has-[form]:basis-full">
+        <CoverForm
+          date={date}
+          period={period}
+          staffId={c.staff.id}
+          staffName={c.staff.name}
+          buttonLabel="Use"
+          buttonClass={highlight ? "btn-primary px-4" : "btn-ghost px-4"}
+          extra={extra}
+        />
       </div>
     </li>
   );
 }
 
-function CoverDetail({ cover }: { cover: Cover }) {
+function SetRow({ cover, person }: { cover: Cover; person: Staff | undefined }) {
   const bits = [cover.absent_teacher && `for ${cover.absent_teacher}`, cover.class_name].filter(Boolean);
   return (
-    <div className="text-xs font-medium text-emerald-700">
-      Covering{bits.length ? ` ${bits.join(", ")}` : ""}
-    </div>
-  );
-}
-
-function UndoButton({ id }: { id: string }) {
-  return (
-    <form action={deleteCover}>
-      <input type="hidden" name="id" value={id} />
-      <button className="text-xs text-slate-500 underline hover:text-red-600">Undo</button>
-    </form>
+    <li className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <span className="font-medium">{person?.name ?? "Unknown"}</span>
+        {bits.length > 0 && <span className="text-sm text-emerald-800"> · {bits.join(", ")}</span>}
+        {!cover.on_rota && <span className="ml-1 text-xs text-amber-700">(off rota)</span>}
+      </div>
+      <form action={deleteCover}>
+        <input type="hidden" name="id" value={cover.id} />
+        <button className="cursor-pointer text-xs text-slate-500 underline hover:text-red-600">Undo</button>
+      </form>
+    </li>
   );
 }

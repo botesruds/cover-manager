@@ -37,15 +37,26 @@ export default async function HistoryPage({
   const qs = (o: Record<string, string>) => new URLSearchParams({ from, to, sort, ...o }).toString();
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="mx-auto max-w-3xl space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">History</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {total} covers from {formatShort(from)} to {formatShort(to)}. {never} rota staff have not covered yet.
+            {total} covers from {formatShort(from)} to {formatShort(to)}
+            {never > 0 && <> · {never} rota staff not used yet</>}
           </p>
         </div>
-        <form className="flex flex-wrap items-end gap-2">
+        <a href={`/export?from=${from}&to=${to}`} className="btn-ghost">
+          Download spreadsheet
+        </a>
+      </div>
+
+      <details className="card group">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm text-slate-600">
+          <span className="mr-1.5 inline-block text-slate-400 transition group-open:rotate-90">▸</span>
+          Change dates
+        </summary>
+        <form className="flex flex-wrap items-end gap-2 px-4 pb-4">
           <div>
             <label className="label">From</label>
             <input type="date" name="from" defaultValue={from} className="input" />
@@ -55,32 +66,30 @@ export default async function HistoryPage({
             <input type="date" name="to" defaultValue={to} className="input" />
           </div>
           <input type="hidden" name="sort" value={sort} />
-          <button className="btn-ghost">Show</button>
-          <a href={`/export?from=${from}&to=${to}`} className="btn-primary">
-            Download CSV
-          </a>
+          <button className="btn-primary">Show</button>
         </form>
-      </div>
+      </details>
 
       {weeks.length > 0 && (
-        <section className="card p-4">
-          <h2 className="font-semibold">Covers per week</h2>
-          <div className="mt-3 space-y-1">
+        <details className="card group">
+          <summary className="cursor-pointer list-none px-4 py-3 text-sm text-slate-600">
+            <span className="mr-1.5 inline-block text-slate-400 transition group-open:rotate-90">▸</span>
+            Covers per week
+          </summary>
+          <div className="space-y-1 px-4 pb-4">
             {weeks.map((w) => (
               <div key={w.week} className="flex items-center gap-3 text-sm">
-                <Link href={`/week?date=${w.week}`} className="w-24 shrink-0 text-slate-600 hover:text-brand-700">
-                  {formatShort(w.week)}
+                <Link href={`/week?date=${w.week}`} className="w-20 shrink-0 text-slate-600 hover:text-brand-700">
+                  {formatShort(w.week).replace(/^\w+ /, "")}
                 </Link>
-                <div className="h-4 flex-1 rounded bg-slate-100">
-                  <div className="h-4 rounded bg-brand-600" style={{ width: `${(w.total / maxWeek) * 100}%` }} />
+                <div className="h-3 flex-1 rounded bg-slate-100">
+                  <div className="h-3 rounded bg-brand-600" style={{ width: `${(w.total / maxWeek) * 100}%` }} />
                 </div>
-                <span className="w-36 shrink-0 text-right text-xs whitespace-nowrap text-slate-500">
-                  {w.total} covers, {w.people} people
-                </span>
+                <span className="w-8 shrink-0 text-right text-xs text-slate-500">{w.total}</span>
               </div>
             ))}
           </div>
-        </section>
+        </details>
       )}
 
       <section className="card overflow-x-auto">
@@ -88,11 +97,9 @@ export default async function HistoryPage({
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
               <Th href={`?${qs({ sort: "name" })}`} on={sort === "name"}>Name</Th>
-              <th className="px-3 py-2 font-medium">Code</th>
               <Th href={`?${qs({ sort: sort === "most" ? "least" : "most" })}`} on={sort === "most" || sort === "least"}>
                 Covers {sort === "least" ? "↑" : "↓"}
               </Th>
-              <th className="px-3 py-2 font-medium">Weeks used</th>
               <Th href={`?${qs({ sort: "recent" })}`} on={sort === "recent"}>Last cover</Th>
             </tr>
           </thead>
@@ -105,9 +112,7 @@ export default async function HistoryPage({
                   </Link>
                   {!s.active && <span className="ml-1 text-xs">(inactive)</span>}
                 </td>
-                <td className="px-3 py-1.5 text-slate-500">{s.code}</td>
-                <td className="px-3 py-1.5 font-medium">{c.total}</td>
-                <td className="px-3 py-1.5">{c.weeks}</td>
+                <td className="px-3 py-1.5 font-medium tabular-nums">{c.total}</td>
                 <td className="px-3 py-1.5 text-slate-600">{c.last_date ? formatShort(c.last_date) : "—"}</td>
               </tr>
             ))}
