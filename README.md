@@ -16,8 +16,11 @@ who was used, and the quickest way to see who should be next.
   the app just looks at dates from Monday to Sunday.
 - **History** (`/history`): totals per person over any date range, covers per
   week, a page per person, and a CSV download.
+- **Extra options**: under each period, "More free staff" lists people who are
+  not on the rota for that slot but are free according to the master timetable
+  (free in the current Week A/B, or in both weeks until you say which week it is).
 - **Rota** (`/rota`): edit anyone's slots, add or deactivate staff, or upload a
-  new rota spreadsheet. Uploading shows what will change before saving and
+  new rota spreadsheet or master timetable. Uploading shows what will change before saving and
   never touches cover history.
 
 One rota serves both Week A and Week B: every slot is a period the person is
@@ -36,7 +39,7 @@ free in both weeks.
 4. `npm install && npm run dev`
 
 To rebuild the seed from a new spreadsheet:
-`node --experimental-strip-types scripts/make-seed.ts rota.xlsx > supabase/seed.sql`
+`node --experimental-strip-types scripts/make-seed.ts rota.xlsx [timetable.xlsx] > supabase/seed.sql`
 (or just upload it on the Rota page).
 
 ## Checks
