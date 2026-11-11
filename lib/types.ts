@@ -15,6 +15,7 @@ export type Staff = {
   name: string;
   teaches: string | null;
   active: boolean;
+  offer_as_extra: boolean;
   rota_slots: Slot[];
 };
 

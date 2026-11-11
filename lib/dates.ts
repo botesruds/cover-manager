@@ -80,3 +80,14 @@ export function todayISO(): string {
   const get = (t: string) => parts.find((p) => p.type === t)!.value;
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
+
+/**
+ * Week A or Week B for a date, given any Monday known to be in Week A.
+ * Returns null when no reference has been set.
+ */
+export function weekLetter(date: string, weekAMonday: string | null | undefined): "A" | "B" | null {
+  if (!weekAMonday || !isValidISO(weekAMonday)) return null;
+  const ms = parseISO(weekStart(date)).getTime() - parseISO(weekStart(weekAMonday)).getTime();
+  const weeks = Math.round(ms / (7 * 24 * 3600 * 1000));
+  return Math.abs(weeks) % 2 === 0 ? "A" : "B";
+}

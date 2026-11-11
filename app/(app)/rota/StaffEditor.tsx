@@ -86,8 +86,12 @@ export function StaffEditor({ staff }: { staff?: Staff }) {
           </div>
         </fieldset>
         <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="offer_as_extra" defaultChecked={staff ? staff.offer_as_extra : true} />
+          Suggest as an extra option when the timetable shows them free
+        </label>
+        <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" name="active" defaultChecked={staff ? staff.active : true} />
-          On the rota (untick when someone leaves; their history is kept)
+          Still at the school (untick when someone leaves; their history is kept)
         </label>
         {state.status === "error" && <p className="text-sm text-red-600">{state.message}</p>}
         <div className="flex gap-2">

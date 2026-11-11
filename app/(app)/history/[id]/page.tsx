@@ -21,7 +21,7 @@ export default async function StaffHistory({
   const supabase = await createClient();
   const { data: person } = await supabase
     .from("staff")
-    .select("id, code, name, teaches, active, rota_slots(id, staff_id, kind, day, period, option)")
+    .select("id, code, name, teaches, active, offer_as_extra, rota_slots(id, staff_id, kind, day, period, option)")
     .eq("id", id)
     .maybeSingle();
   if (!person) notFound();

@@ -45,3 +45,12 @@ test("week resets on Monday", () => {
   assert.equal(academicYearStart("2026-11-11"), "2026-09-01");
   assert.equal(academicYearStart("2027-03-01"), "2026-09-01");
 });
+
+import { weekLetter } from "./dates.ts";
+test("week letter alternates from the Week A reference", () => {
+  assert.equal(weekLetter("2026-11-11", "2026-11-09"), "A");
+  assert.equal(weekLetter("2026-11-18", "2026-11-09"), "B");
+  assert.equal(weekLetter("2026-11-04", "2026-11-09"), "B");
+  assert.equal(weekLetter("2026-11-25", "2026-11-09"), "A");
+  assert.equal(weekLetter("2026-11-25", null), null);
+});

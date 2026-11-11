@@ -6,7 +6,8 @@ create table public.staff (
   code text not null unique,
   name text not null,
   teaches text,
-  active boolean not null default true,
+  active boolean not null default true,      -- still at the school
+  offer_as_extra boolean not null default true, -- show as an extra (off-rota) option when free
   created_at timestamptz not null default now()
 );
 
@@ -41,7 +42,7 @@ create index covers_staff_date on public.covers (staff_id, cover_date);
 
 -- Monday of the week a cover falls in (usage resets each Monday).
 create or replace function public.week_start(d date) returns date
-language sql immutable as $$ select d - (extract(isodow from d)::int - 1) $$;
+language sql immutable set search_path = public as $$ select d - (extract(isodow from d)::int - 1) $$;
 
 -- Who may use the app. Add rows here to give someone access.
 create table public.allowed_users (
@@ -71,8 +72,8 @@ create policy "read own row" on public.allowed_users for select to authenticated
   using (lower(email) = lower(coalesce(auth.jwt() ->> 'email', '')));
 
 -- Replace the whole rota in one transaction (used by the spreadsheet import).
--- Staff missing from the new file are marked inactive, never deleted, so
--- their cover history stays intact.
+-- Staff missing from the new file just lose their rota slots: they stay in
+-- the staff list (they may still be extra options) and keep their history.
 create or replace function public.import_rota(payload jsonb) returns jsonb
 language plpgsql security invoker set search_path = public as $$
 declare
@@ -81,7 +82,7 @@ declare
   sid uuid;
   n_staff int := 0;
   n_slots int := 0;
-  n_inactive int := 0;
+  n_removed int := 0;
 begin
   if not public.is_allowed() then
     raise exception 'not allowed';
@@ -106,12 +107,73 @@ begin
     end loop;
   end loop;
 
-  update staff set active = false
-  where active and code not in (select x->>'code' from jsonb_array_elements(payload) x);
-  get diagnostics n_inactive = row_count;
-  delete from rota_slots where staff_id in (select id from staff where not active);
+  with gone as (
+    delete from rota_slots
+    where staff_id in (
+      select id from staff
+      where code not in (select x->>'code' from jsonb_array_elements(payload) x)
+    )
+    returning staff_id
+  )
+  select count(distinct staff_id) into n_removed from gone;
 
-  return jsonb_build_object('staff', n_staff, 'slots', n_slots, 'deactivated', n_inactive);
+  return jsonb_build_object('staff', n_staff, 'slots', n_slots, 'removed', n_removed);
+end $$;
+
+-- Free periods from the master timetable, per week (A/B). Used to suggest
+-- extra cover options beyond the rota.
+create table public.timetable_free (
+  staff_id uuid not null references public.staff(id) on delete cascade,
+  week text not null check (week in ('A', 'B')),
+  day smallint not null check (day between 1 and 5),
+  period text not null check (period in ('P1','P2','P3','P4','TA','TB','P5','P6')),
+  primary key (staff_id, week, day, period)
+);
+create index timetable_free_slot on public.timetable_free (day, period);
+
+-- Small key/value settings, e.g. which Monday is a Week A Monday.
+create table public.app_settings (
+  key text primary key,
+  value text not null
+);
+
+alter table public.timetable_free enable row level security;
+alter table public.app_settings enable row level security;
+create policy "allowed users" on public.timetable_free for all to authenticated
+  using (public.is_allowed()) with check (public.is_allowed());
+create policy "allowed users" on public.app_settings for all to authenticated
+  using (public.is_allowed()) with check (public.is_allowed());
+
+-- Replace the timetable in one transaction. New people are added to the
+-- staff list (names from the timetable); existing names are left alone.
+create or replace function public.import_timetable(payload jsonb) returns jsonb
+language plpgsql security invoker set search_path = public as $$
+declare
+  r jsonb;
+  sid uuid;
+  n_staff int := 0;
+  n_new int := 0;
+  n_free int := 0;
+  was_new boolean;
+begin
+  if not public.is_allowed() then
+    raise exception 'not allowed';
+  end if;
+  delete from timetable_free;
+  for r in select * from jsonb_array_elements(payload) loop
+    insert into staff (code, name) values (r->>'code', r->>'name')
+    on conflict (code) do update set code = excluded.code
+    returning id, (xmax = 0) into sid, was_new;
+    n_staff := n_staff + 1;
+    if was_new then n_new := n_new + 1; end if;
+    insert into timetable_free (staff_id, week, day, period)
+    select sid, w.key, split_part(v, '-', 1)::smallint, split_part(v, '-', 2)
+    from jsonb_each(r->'free') w
+    cross join lateral jsonb_array_elements_text(w.value) v
+    on conflict do nothing;
+  end loop;
+  select count(*) into n_free from timetable_free;
+  return jsonb_build_object('staff', n_staff, 'new_staff', n_new, 'free_slots', n_free);
 end $$;
 
 -- Cover counts per person over a date range (runs with the caller's RLS).

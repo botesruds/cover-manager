@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server.ts";
-import { readRotaWorkbook } from "@/lib/workbook.ts";
+import { readRotaWorkbook, readTimetableWorkbook } from "@/lib/workbook.ts";
 import { toImportPayload, type ImportStaff } from "@/lib/rota-parse.ts";
 import { PERIOD_ORDER, isTutor, type PeriodKey } from "@/lib/schedule.ts";
 import type { ActionState } from "@/app/actions.ts";
@@ -29,6 +29,7 @@ export async function saveStaff(_prev: ActionState, fd: FormData): Promise<Actio
   const code = str(fd, "code").toUpperCase();
   const teaches = str(fd, "teaches") || null;
   const active = str(fd, "active") === "on";
+  const offer_as_extra = str(fd, "offer_as_extra") === "on";
   if (!name || !code) return { status: "error", message: "Name and code are both needed." };
 
   const slots: { kind: "lesson" | "tutor"; day: number; period: PeriodKey; option: number | null }[] = [];
@@ -51,12 +52,12 @@ export async function saveStaff(_prev: ActionState, fd: FormData): Promise<Actio
   const dupMsg = (code: string) => `Code ${code} is already used by someone else.`;
   let staffId = id;
   if (id) {
-    const { error } = await supabase.from("staff").update({ name, code, teaches, active }).eq("id", id);
+    const { error } = await supabase.from("staff").update({ name, code, teaches, active, offer_as_extra }).eq("id", id);
     if (error) return { status: "error", message: error.code === "23505" ? dupMsg(code) : error.message };
   } else {
     const { data, error } = await supabase
       .from("staff")
-      .insert({ name, code, teaches, active })
+      .insert({ name, code, teaches, active, offer_as_extra })
       .select("id")
       .single();
     if (error || !data) {
@@ -113,7 +114,10 @@ export async function previewImport(_prev: ImportPreview, fd: FormData): Promise
   const payload: ImportStaff[] = toImportPayload(parsed.rows);
 
   const supabase = await createClient();
-  const { data: current } = await supabase.from("staff").select("code, name").eq("active", true);
+  const { data: current } = await supabase
+    .from("staff")
+    .select("code, name, rota_slots!inner(id)")
+    .eq("active", true);
   const now = new Set((current ?? []).map((s) => s.code));
   const next = new Set(payload.map((s) => s.code));
 
@@ -125,7 +129,9 @@ export async function previewImport(_prev: ImportPreview, fd: FormData): Promise
     lessonSlots: payload.reduce((n, s) => n + s.slots.filter((x) => x.kind === "lesson").length, 0),
     tutorSlots: payload.reduce((n, s) => n + s.slots.filter((x) => x.kind === "tutor").length, 0),
     added: payload.filter((s) => !now.has(s.code)).map((s) => `${s.name} (${s.code})`),
-    removed: (current ?? []).filter((s) => !next.has(s.code)).map((s) => `${s.name} (${s.code})`),
+    removed: [...new Map((current ?? []).map((s) => [s.code, s.name])).entries()]
+      .filter(([code]) => !next.has(code))
+      .map(([code, name]) => `${name} (${code})`),
     problems: parsed.problems,
   };
 }
@@ -141,13 +147,75 @@ export async function confirmImport(_prev: ImportPreview, fd: FormData): Promise
   const { data, error } = await supabase.rpc("import_rota", { payload });
   if (error) return { status: "error", message: error.message };
   revalidatePath("/", "layout");
-  const r = data as { staff: number; slots: number; deactivated: number };
+  const r = data as { staff: number; slots: number; removed: number };
   return {
     status: "done",
     message:
       `Rota updated: ${r.staff} staff and ${r.slots} slots.` +
-      (r.deactivated
-        ? ` ${r.deactivated} staff no longer on the rota were set to inactive (their history is kept).`
-        : ""),
+      (r.removed ? ` ${r.removed} staff were taken off the rota (their history is kept).` : ""),
   };
+}
+
+export type TimetablePreview =
+  | { status: "idle" }
+  | { status: "error"; message: string }
+  | { status: "preview"; payload: string; staff: number; newStaff: string[]; problems: string[] }
+  | { status: "done"; message: string };
+
+export async function previewTimetable(_prev: TimetablePreview, fd: FormData): Promise<TimetablePreview> {
+  const file = fd.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { status: "error", message: "Choose the timetable spreadsheet first." };
+  }
+  let parsed;
+  try {
+    parsed = await readTimetableWorkbook(await file.arrayBuffer());
+  } catch {
+    return { status: "error", message: "Could not read that file. Is it an .xlsx spreadsheet?" };
+  }
+  if (parsed.staff.length === 0) {
+    return { status: "error", message: parsed.problems[0] ?? "No staff found in that file." };
+  }
+  const supabase = await createClient();
+  const { data: current } = await supabase.from("staff").select("code");
+  const known = new Set((current ?? []).map((s) => s.code));
+  return {
+    status: "preview",
+    payload: JSON.stringify(parsed.staff.map((s) => ({ code: s.code, name: s.name, free: s.free }))),
+    staff: parsed.staff.length,
+    newStaff: parsed.staff.filter((s) => !known.has(s.code)).map((s) => `${s.name} (${s.code})`),
+    problems: parsed.problems,
+  };
+}
+
+export async function confirmTimetable(_prev: TimetablePreview, fd: FormData): Promise<TimetablePreview> {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(str(fd, "payload"));
+  } catch {
+    return { status: "error", message: "The import data was lost. Please upload the file again." };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("import_timetable", { payload });
+  if (error) return { status: "error", message: error.message };
+  revalidatePath("/", "layout");
+  const r = data as { staff: number; new_staff: number; free_slots: number };
+  return {
+    status: "done",
+    message: `Timetable updated: free periods for ${r.staff} staff${r.new_staff ? ` (${r.new_staff} new to the app)` : ""}.`,
+  };
+}
+
+/** Record which week the given Monday is, so the app knows Week A from Week B. */
+export async function setWeekLetter(fd: FormData) {
+  const monday = str(fd, "monday");
+  const letter = str(fd, "letter");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(monday) || !["A", "B"].includes(letter)) return;
+  const supabase = await createClient();
+  // Store a Week A Monday: either this one, or the one a week earlier.
+  const d = new Date(monday + "T00:00:00Z");
+  if (letter === "B") d.setUTCDate(d.getUTCDate() - 7);
+  const weekA = d.toISOString().slice(0, 10);
+  await supabase.from("app_settings").upsert({ key: "week_a_monday", value: weekA });
+  revalidatePath("/", "layout");
 }

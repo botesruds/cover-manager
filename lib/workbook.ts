@@ -5,6 +5,7 @@ import {
   teachesFromPlannerList,
   type RotaRow,
 } from "./rota-parse.ts";
+import { parseTimetable } from "./timetable-parse.ts";
 
 function sheetRows(ws: ExcelJS.Worksheet): unknown[][] {
   const rows: unknown[][] = [];
@@ -36,4 +37,14 @@ export async function readRotaWorkbook(
   if (!rota) return { rows: [], problems: ["The workbook has no sheets."], source: "" };
   const teaches = planner ? teachesFromPlannerList(sheetRows(planner)) : new Map();
   return { ...rowsToRota(sheetRows(rota), teaches), source: rota.name };
+}
+
+/** Read the TimeTabler master staff timetable (first sheet, or "Staff Timetable"). */
+export async function readTimetableWorkbook(data: ArrayBuffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(data);
+  const ws =
+    wb.worksheets.find((w) => w.name.trim().toLowerCase() === "staff timetable") ?? wb.worksheets[0];
+  if (!ws) return { staff: [], problems: ["The workbook has no sheets."] };
+  return parseTimetable(sheetRows(ws));
 }

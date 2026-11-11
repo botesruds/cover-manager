@@ -60,3 +60,37 @@ export function candidatesFor(
   );
   return out;
 }
+
+/**
+ * Extra options beyond the rota: staff the master timetable shows as free in
+ * this period. When the week letter is known, "free" means free that week;
+ * otherwise it means free in both Week A and Week B (the safe choice).
+ * People already on the rota for this slot are left out (they are listed above).
+ */
+export function extrasFor(
+  staff: Staff[],
+  free: Map<string, Set<string>>,
+  week: "A" | "B" | null,
+  day: number,
+  period: PeriodKey,
+  date: string,
+  weekCovers: Cover[],
+  counts: Map<string, CoverCount>,
+): Candidate[] {
+  const pool = staff.filter((s) => {
+    if (!s.active || !s.offer_as_extra) return false;
+    if (s.rota_slots.some((r) => r.day === day && r.period === period)) return false;
+    const f = free.get(s.id);
+    if (!f) return false;
+    return week ? f.has(`${week}-${period}`) : f.has(`A-${period}`) && f.has(`B-${period}`);
+  });
+  // Reuse the rota ordering by pretending each person has this slot.
+  const asSlot = pool.map((s) => ({
+    ...s,
+    rota_slots: [{ id: "", staff_id: s.id, kind: "lesson" as const, day, period, option: null }],
+  }));
+  return candidatesFor(asSlot, day, period, date, weekCovers, counts).map((c) => ({
+    ...c,
+    staff: staff.find((s) => s.id === c.staff.id)!,
+  }));
+}

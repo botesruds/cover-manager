@@ -26,6 +26,8 @@ export async function logCover(_prev: ActionState, fd: FormData): Promise<Action
   const date = str(fd, "date");
   const period = str(fd, "period") as PeriodKey;
   const force = str(fd, "force") === "1";
+  // Chosen from the timetable's free list: being off-rota is expected there.
+  const extra = str(fd, "extra") === "1";
 
   if (!staffId) return { status: "error", message: "Choose a member of staff." };
   if (!isValidISO(date)) return { status: "error", message: "That date is not valid." };
@@ -62,7 +64,7 @@ export async function logCover(_prev: ActionState, fd: FormData): Promise<Action
         .join(", ");
       warnings.push(`${person.name} has already covered this week (${when}).`);
     }
-    if (!onRota) warnings.push(`${person.name} is not on the rota for ${slotLabel(day, period)}.`);
+    if (!onRota && !extra) warnings.push(`${person.name} is not on the rota for ${slotLabel(day, period)}.`);
     if (warnings.length) return { status: "confirm", message: warnings.join(" ") };
   }
 

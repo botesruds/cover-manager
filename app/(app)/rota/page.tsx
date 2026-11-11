@@ -2,6 +2,7 @@ import { getStaff } from "@/lib/data.ts";
 import { PERIOD_LABEL, PERIOD_ORDER, WEEKDAYS, periodTime, type PeriodKey, type Weekday } from "@/lib/schedule.ts";
 import type { Slot } from "@/lib/types.ts";
 import { ImportRota } from "./ImportRota.tsx";
+import { ImportTimetable } from "./ImportTimetable.tsx";
 import { StaffEditor } from "./StaffEditor.tsx";
 
 function fmt(s: Slot | undefined) {
@@ -10,8 +11,10 @@ function fmt(s: Slot | undefined) {
 
 export default async function RotaPage() {
   const staff = await getStaff({ includeInactive: true });
-  const active = staff.filter((s) => s.active);
+  const onRota = staff.filter((s) => s.active && s.rota_slots.length > 0);
+  const others = staff.filter((s) => s.active && s.rota_slots.length === 0);
   const inactive = staff.filter((s) => !s.active);
+  const active = onRota;
 
   // How many names sit on each slot, to spot thin periods.
   const load = new Map<string, number>();
@@ -32,7 +35,10 @@ export default async function RotaPage() {
         </p>
       </div>
 
-      <ImportRota />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ImportRota />
+        <ImportTimetable />
+      </div>
 
       <section className="card overflow-x-auto p-4">
         <h2 className="font-semibold">Names per period</h2>
@@ -68,7 +74,12 @@ export default async function RotaPage() {
 
       <section className="card">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <h2 className="font-semibold">Staff</h2>
+          <h2 className="font-semibold">
+            Staff{" "}
+            <span className="text-sm font-normal text-slate-500">
+              {onRota.length} on the rota, {others.length} from the timetable only
+            </span>
+          </h2>
           <StaffEditor />
         </div>
         <div className="overflow-x-auto">
@@ -85,7 +96,7 @@ export default async function RotaPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {[...active, ...inactive].map((s) => {
+              {[...onRota, ...others, ...inactive].map((s) => {
                 const l1 = s.rota_slots.find((r) => r.kind === "lesson" && r.option === 1);
                 const l2 = s.rota_slots.find((r) => r.kind === "lesson" && r.option === 2);
                 const tutor = s.rota_slots.filter((r) => r.kind === "tutor");
@@ -93,7 +104,10 @@ export default async function RotaPage() {
                   <tr key={s.id} className={`align-top ${s.active ? "" : "text-slate-400"}`}>
                     <td className="px-3 py-1.5">
                       {s.name}
-                      {!s.active && <span className="ml-1 text-xs">(inactive)</span>}
+                      {!s.active && <span className="ml-1 text-xs">(left)</span>}
+                      {s.active && !s.offer_as_extra && (
+                        <span className="ml-1 text-xs text-slate-400">(not suggested as extra)</span>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-slate-500">{s.code}</td>
                     <td className="max-w-56 truncate px-3 py-1.5 text-slate-500">{s.teaches ?? ""}</td>

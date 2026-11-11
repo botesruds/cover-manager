@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { CoverForm } from "@/components/CoverForm.tsx";
 import { DatePicker } from "@/components/DatePicker.tsx";
-import { candidatesFor, type Candidate } from "@/lib/candidates.ts";
-import { getCoverCounts, getCovers, getStaff } from "@/lib/data.ts";
+import { candidatesFor, extrasFor, type Candidate } from "@/lib/candidates.ts";
+import { getCoverCounts, getCovers, getSetting, getStaff, getTimetableFree } from "@/lib/data.ts";
 import {
   academicYearStart,
   addDays,
@@ -12,11 +12,13 @@ import {
   isValidISO,
   nextSchoolDay,
   todayISO,
+  weekLetter,
   weekStart,
 } from "@/lib/dates.ts";
 import { PERIOD_LABEL, periodsForDay, type PeriodKey, type Weekday } from "@/lib/schedule.ts";
 import type { Cover, Staff } from "@/lib/types.ts";
 import { deleteCover } from "../actions.ts";
+import { setWeekLetter } from "./rota/actions.ts";
 
 function prevSchoolDay(d: string) {
   let x = addDays(d, -1);
@@ -38,11 +40,15 @@ export default async function CoverPage({
   const day = isoWeekday(date) as Weekday;
   const ws = weekStart(date);
 
-  const [staff, weekCovers, counts] = await Promise.all([
+  const [staff, weekCovers, counts, free, weekAMonday] = await Promise.all([
     getStaff(),
     getCovers(ws, addDays(ws, 6)),
     getCoverCounts(academicYearStart(date), addDays(ws, 6)),
+    getTimetableFree(day),
+    getSetting("week_a_monday"),
   ]);
+  const week = weekLetter(date, weekAMonday);
+  const hasTimetable = free.size > 0;
 
   const staffById = new Map(staff.map((s) => [s.id, s]));
   const onRotaCount = staff.filter((s) => s.rota_slots.length > 0).length;
@@ -53,7 +59,10 @@ export default async function CoverPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">{formatLong(date)}</h1>
+          <h1 className="flex flex-wrap items-center gap-3 text-2xl font-semibold">
+            {formatLong(date)}
+            <WeekBadge week={week} monday={ws} />
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             Week of {formatShort(ws)}: {weekCovers.length} cover{weekCovers.length === 1 ? "" : "s"} set,{" "}
             {usedThisWeek} of {onRotaCount} rota staff used.{" "}
@@ -81,6 +90,10 @@ export default async function CoverPage({
       <p className="text-sm text-slate-500">
         Names in each period come from the rota. Anyone who has already covered this week is greyed
         out. The rest are in fairness order: fewest covers this year first.
+        {hasTimetable &&
+          ` Under each period, "More free staff" lists people off the rota who the master timetable shows as free ${
+            week ? `in Week ${week}` : "in both Week A and Week B"
+          }.`}
       </p>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -88,6 +101,11 @@ export default async function CoverPage({
           const cands = candidatesFor(staff, day, key, date, weekCovers, counts);
           const here = weekCovers.filter((c) => c.cover_date === date && c.period === key);
           const offRota = here.filter((c) => !cands.some((x) => x.staff.id === c.staff_id));
+          const extras = hasTimetable
+            ? extrasFor(staff, free, week, day, key, date, weekCovers, counts).filter(
+                (x) => !offRota.some((c) => c.staff_id === x.staff.id),
+              )
+            : null;
           return (
             <PeriodCard
               key={key}
@@ -96,6 +114,7 @@ export default async function CoverPage({
               time={time}
               candidates={cands}
               offRota={offRota}
+              extras={extras}
               staffById={staffById}
               staffOptions={staffOptions}
             />
@@ -112,6 +131,7 @@ function PeriodCard({
   time,
   candidates,
   offRota,
+  extras,
   staffById,
   staffOptions,
 }: {
@@ -120,6 +140,7 @@ function PeriodCard({
   time: string;
   candidates: Candidate[];
   offRota: Cover[];
+  extras: Candidate[] | null;
   staffById: Map<string, Staff>;
   staffOptions: { id: string; name: string; code: string }[];
 }) {
@@ -156,6 +177,7 @@ function PeriodCard({
           <li className="px-4 py-3 text-sm text-slate-500">Nobody is on the rota for this period.</li>
         )}
       </ul>
+      {extras && <ExtrasList extras={extras} date={date} period={period} />}
       <div className="mt-auto border-t border-slate-100 px-4 py-2.5">
         <CoverForm
           date={date}
@@ -169,8 +191,58 @@ function PeriodCard({
   );
 }
 
-function CandidateRow({ c, date, period }: { c: Candidate; date: string; period: PeriodKey }) {
-  const optLabel = c.option === 1 ? "1st" : c.option === 2 ? "2nd" : "Tutor";
+function ExtrasList({ extras, date, period }: { extras: Candidate[]; date: string; period: PeriodKey }) {
+  const free = extras.filter((c) => c.status === "available");
+  const used = extras.length - free.length;
+  return (
+    <details className="group border-t border-slate-100">
+      <summary className="cursor-pointer list-none px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50">
+        <span className="mr-1 inline-block transition group-open:rotate-90">▸</span>
+        More free staff ({free.length})
+        {used > 0 && <span className="text-xs text-slate-400"> · {used} already used this week</span>}
+      </summary>
+      <ul className="divide-y divide-slate-100 bg-slate-50/50">
+        {free.map((c) => (
+          <CandidateRow key={c.staff.id} c={c} date={date} period={period} extra />
+        ))}
+        {free.length === 0 && (
+          <li className="px-4 py-2.5 text-sm text-slate-500">Nobody else is free and unused this period.</li>
+        )}
+      </ul>
+    </details>
+  );
+}
+
+function WeekBadge({ week, monday }: { week: "A" | "B" | null; monday: string }) {
+  if (week) {
+    const other = week === "A" ? "B" : "A";
+    return (
+      <form action={setWeekLetter} className="flex items-center gap-1.5 text-sm font-normal">
+        <span className="rounded-full bg-brand-50 px-2.5 py-0.5 font-medium text-brand-700">Week {week}</span>
+        <input type="hidden" name="monday" value={monday} />
+        <input type="hidden" name="letter" value={other} />
+        <button className="cursor-pointer text-xs text-slate-400 hover:text-slate-700 hover:underline">
+          It&apos;s Week {other}
+        </button>
+      </form>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1.5 text-sm font-normal text-slate-600">
+      Which week is this?
+      {(["A", "B"] as const).map((l) => (
+        <form key={l} action={setWeekLetter}>
+          <input type="hidden" name="monday" value={monday} />
+          <input type="hidden" name="letter" value={l} />
+          <button className="btn-ghost px-2 py-0.5 text-xs">Week {l}</button>
+        </form>
+      ))}
+    </span>
+  );
+}
+
+function CandidateRow({ c, date, period, extra }: { c: Candidate; date: string; period: PeriodKey; extra?: boolean }) {
+  const optLabel = extra ? "Free" : c.option === 1 ? "1st" : c.option === 2 ? "2nd" : "Tutor";
   const here = c.weekCovers.find((x) => x.cover_date === date && x.period === period);
   const usedOn = c.weekCovers
     .filter((x) => x !== here)
@@ -210,7 +282,15 @@ function CandidateRow({ c, date, period }: { c: Candidate; date: string; period:
           {c.status === "covering" && here ? (
             <UndoButton id={here.id} />
           ) : c.status === "available" ? (
-            <CoverForm date={date} period={period} staffId={c.staff.id} staffName={c.staff.name} buttonLabel="Use" />
+            <CoverForm
+              date={date}
+              period={period}
+              staffId={c.staff.id}
+              staffName={c.staff.name}
+              buttonLabel="Use"
+              buttonClass={extra ? "btn-ghost" : undefined}
+              extra={extra}
+            />
           ) : null}
         </div>
       </div>

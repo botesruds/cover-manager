@@ -12,9 +12,11 @@ type Props = {
   staffOptions?: { id: string; name: string; code: string }[];
   buttonLabel: string;
   buttonClass?: string;
+  /** Picked from the timetable's free staff, so no off-rota warning. */
+  extra?: boolean;
 };
 
-export function CoverForm({ date, period, staffId, staffName, staffOptions, buttonLabel, buttonClass }: Props) {
+export function CoverForm({ date, period, staffId, staffName, staffOptions, buttonLabel, buttonClass, extra }: Props) {
   const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState<ActionState, FormData>(logCover, { status: "idle" });
   const forceRef = useRef<HTMLInputElement>(null);
@@ -44,6 +46,7 @@ export function CoverForm({ date, period, staffId, staffName, staffOptions, butt
       <input type="hidden" name="date" value={date} />
       <input type="hidden" name="period" value={period} />
       <input type="hidden" name="force" ref={forceRef} defaultValue="0" />
+      {extra && <input type="hidden" name="extra" value="1" />}
       {staffOptions ? (
         <div>
           <label className="label">Who is covering</label>
