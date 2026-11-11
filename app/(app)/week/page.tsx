@@ -18,30 +18,31 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
   const offRota = covers.filter((c) => !c.on_rota).length;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Week of {formatShort(ws)}</h1>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-2">
+        <Link href={`/week?date=${addDays(ws, -7)}`} className="btn-ghost h-10 w-10 p-0" aria-label="Previous week">
+          ←
+        </Link>
+        <div className="min-w-0 text-center">
+          <h1 className="text-xl font-semibold sm:text-2xl">Week of {formatShort(ws)}</h1>
           <p className="mt-1 text-sm text-slate-600">
-            Usage resets every Monday. Past weeks stay in the history.
+            {covers.length} cover{covers.length === 1 ? "" : "s"} set · {perStaff.size} of {rotaStaff.length} rota staff
+            used
+            {twice.length > 0 && (
+              <span className="text-amber-700">
+                {" "}
+                · {twice.length} used more than once
+              </span>
+            )}
+            {offRota > 0 && <span className="text-amber-700"> · {offRota} off rota</span>}
           </p>
+          <div className="mt-1 text-sm">
+            <DatePicker value={ws} compact />
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Link href={`/week?date=${addDays(ws, -7)}`} className="btn-ghost">
-            ← Previous week
-          </Link>
-          <DatePicker value={ws} />
-          <Link href={`/week?date=${addDays(ws, 7)}`} className="btn-ghost">
-            Next week →
-          </Link>
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-4">
-        <Stat label="Covers set" value={covers.length} />
-        <Stat label="Rota staff used" value={`${perStaff.size} of ${rotaStaff.length}`} />
-        <Stat label="Used more than once" value={twice.length} warn={twice.length > 0} />
-        <Stat label="Off-rota covers" value={offRota} warn={offRota > 0} />
+        <Link href={`/week?date=${addDays(ws, 7)}`} className="btn-ghost h-10 w-10 p-0" aria-label="Next week">
+          →
+        </Link>
       </div>
 
       <div className="card overflow-x-auto">
@@ -61,7 +62,7 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
           <tbody className="divide-y divide-slate-100">
             {PERIOD_ORDER.map((p) => (
               <tr key={p} className="align-top">
-                <td className="px-3 py-2 font-medium">{PERIOD_LABEL[p]}</td>
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{PERIOD_LABEL[p]}</td>
                 {WEEKDAYS.map((d) => {
                   if (!periodTime(d.day as Weekday, p)) {
                     return <td key={d.day} className="bg-slate-50 px-3 py-2" />;
@@ -69,7 +70,7 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
                   const date = addDays(ws, d.day - 1);
                   const here = covers.filter((c) => c.cover_date === date && c.period === p);
                   return (
-                    <td key={d.day} className="px-3 py-2">
+                    <td key={d.day} className="group px-3 py-2">
                       {here.map((c) => {
                         const s = staffById.get(c.staff_id);
                         const repeat = (perStaff.get(c.staff_id) ?? 0) > 1;
@@ -85,6 +86,13 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
                           </div>
                         );
                       })}
+                      <Link
+                        href={`/?date=${date}&p=${p}`}
+                        className="text-xs text-brand-700 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        aria-label={`Set cover ${d.name} ${PERIOD_LABEL[p]}`}
+                      >
+                        + add
+                      </Link>
                     </td>
                   );
                 })}
@@ -94,46 +102,17 @@ export default async function WeekPage({ searchParams }: { searchParams: Promise
         </table>
       </div>
 
-      {twice.length > 0 && (
-        <section className="card p-4">
-          <h2 className="font-semibold text-amber-800">Used more than once this week</h2>
-          <ul className="mt-2 text-sm">
-            {twice.map(([id, n]) => (
-              <li key={id}>
-                {staffById.get(id)?.name}: {n} covers
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section className="card p-4">
-        <h2 className="font-semibold">Not used yet this week ({unused.length})</h2>
-        <p className="mt-1 text-xs text-slate-500">Rota staff still available, with their slots.</p>
-        <ul className="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2 lg:grid-cols-3">
+      <details className="card group">
+        <summary className="cursor-pointer list-none px-4 py-3 font-semibold">
+          <span className="mr-1.5 inline-block text-slate-400 transition group-open:rotate-90">▸</span>
+          Not used yet this week ({unused.length})
+        </summary>
+        <ul className="grid gap-x-6 gap-y-1 px-4 pb-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
           {unused.map((s) => (
-            <li key={s.id} className="flex justify-between gap-2">
-              <span>{s.name}</span>
-              <span className="text-xs text-slate-500">
-                {s.rota_slots
-                  .slice()
-                  .sort((a, b) => a.day - b.day || PERIOD_ORDER.indexOf(a.period) - PERIOD_ORDER.indexOf(b.period))
-                  .map((r) => `${WEEKDAYS[r.day - 1].short} ${PERIOD_LABEL[r.period]}`)
-                  .join(" · ")}
-              </span>
-            </li>
+            <li key={s.id}>{s.name}</li>
           ))}
         </ul>
-      </section>
-    </div>
-  );
-}
-
-function Stat({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
-  return (
-    <div className="card px-4 py-3">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className={`text-2xl font-semibold ${warn ? "text-amber-700" : ""}`}>{value}</div>
+      </details>
     </div>
   );
 }
